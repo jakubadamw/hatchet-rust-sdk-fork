@@ -128,7 +128,7 @@ impl Worker {
         )));
 
         let worker_id_clone = worker_id.clone();
-        tokio::spawn(async move {
+        let action_listener_handle = tokio::spawn(async move {
             log::debug!("starting action listener");
             action_listener
                 .lock()
@@ -157,6 +157,19 @@ impl Worker {
                         .await?
                 }
                 Ok(())
+            },
+            // Joined rather than left to run on its own, so that a listener
+            // which has given up ends the worker with it. Dropping the handle
+            // instead discards the error, and because the heartbeat above never
+            // returns, `start` would go on running — and the worker go on
+            // looking healthy to the engine — long after it had stopped being
+            // able to receive anything.
+            async {
+                action_listener_handle.await.unwrap_or_else(|e| {
+                    Err(HatchetError::InternalError(format!(
+                        "action listener stopped unexpectedly: {e}"
+                    )))
+                })
             }
         )?;
 

@@ -548,3 +548,86 @@ async fn test_workflow_schedule_convenience() {
         .await
         .unwrap();
 }
+
+/// The tracing layer forwards events emitted inside a handler — including from a helper
+/// that never sees a `Context` — to the right task run, at the right level.
+#[cfg(feature = "tracing")]
+#[tokio::test]
+async fn test_tracing_layer_sends_logs_to_hatchet() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let t = TestHarness::new("tracing-logs").await;
+
+    // A plain helper, with no access to `Context`, several frames below the handler.
+    fn nested_helper(message: &str) {
+        tracing::info!(target: "test_app", helper = true, "nested: {message}");
+    }
+
+    let task = t
+        .hatchet
+        .task(
+            &t.prefixed("step"),
+            async move |input: SimpleInput,
+                        _ctx: hatchet_sdk::Context|
+                        -> anyhow::Result<SimpleOutput> {
+                tracing::info!(target: "test_app", "handler started");
+                nested_helper(&input.message);
+                tracing::warn!(target: "test_app", "handler finishing");
+
+                Ok(SimpleOutput {
+                    transformed_message: input.message.clone(),
+                })
+            },
+        )
+        .build()
+        .unwrap();
+
+    // Installed globally rather than with `set_default`, which only binds the calling
+    // thread: the worker polls handlers on its own runtime threads, so a thread-local
+    // subscriber would miss every event the handler emits.
+    //
+    // The default ignore list is kept, so this also proves the `test_app` events survive
+    // the filter that drops the SDK's own gRPC chatter.
+    let subscriber =
+        tracing_subscriber::registry().with(hatchet_sdk::HatchetLayer::new(&t.hatchet));
+    let _ = tracing::subscriber::set_global_default(subscriber);
+
+    let _worker = t.spawn_worker_for_task(&task).await;
+
+    let run_id = task
+        .run_no_wait(
+            &SimpleInput {
+                message: "hello".to_string(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    // Wait for the run to finish so the dispatcher has flushed the queued lines.
+    assert_eq!("COMPLETED", t.wait_for_run(&run_id).await);
+
+    let task_run_id = t.first_task_run_id(&run_id).await;
+    let logs = t.task_logs(&task_run_id, 3).await;
+
+    let messages: Vec<&str> = logs.iter().map(|(_, message)| message.as_str()).collect();
+    assert!(
+        messages.contains(&"handler started"),
+        "expected the handler's own event, got {logs:?}"
+    );
+    assert!(
+        messages.contains(&"nested: hello"),
+        "expected the nested helper's event, got {logs:?}"
+    );
+    assert!(
+        messages.contains(&"handler finishing"),
+        "expected the final event to survive the flush, got {logs:?}"
+    );
+
+    let levels: Vec<&str> = logs
+        .iter()
+        .filter(|(_, message)| message == "handler finishing")
+        .map(|(level, _)| level.as_str())
+        .collect();
+    assert_eq!(vec!["WARN"], levels, "expected WARN to reach the server");
+}

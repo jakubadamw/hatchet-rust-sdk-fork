@@ -83,6 +83,7 @@ impl TaskDispatcher {
             workflow_run_id: message.workflow_run_id.clone(),
             task_run_external_id: message.task_run_external_id.clone(),
             child_index: 0,
+            retry_count: message.retry_count,
         };
 
         let context = Context::new(

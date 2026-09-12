@@ -9,6 +9,11 @@ version = "0.0.0"
 edition = "2024"
 readme = "README.md"
 
+[features]
+default = []
+# Forward `tracing` events emitted inside a task handler to the Hatchet dashboard.
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
+
 [dependencies]
 anyhow = "1.0.99"
 async-trait = "0.1.88"
@@ -37,6 +42,12 @@ uuid = { version = "^1.8", features = ["serde", "v4"] }
 log = "0.4.28"
 chrono = { version = "0.4", features = ["serde"] }
 cron = "0.15"
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = [
+    "registry",
+    "std",
+    "fmt",
+] }
 
 
 [build-dependencies]
@@ -45,6 +56,8 @@ tonic-prost-build = "0.14.2"
 [dev-dependencies]
 dotenvy = "0.15.7"
 env_logger = "0.11.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 libc = "0.2"
 schemars = "0.8"
 testcontainers = "0.26.3"
@@ -76,3 +89,6 @@ path = "examples/input_json_schema.rs"
 [[example]]
 name = "streaming"
 path = "examples/streaming.rs"
+
+[package.metadata.docs.rs]
+all-features = true

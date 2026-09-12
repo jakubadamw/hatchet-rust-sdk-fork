@@ -13,6 +13,11 @@ use crate::error::HatchetError;
 use crate::runnables::ExecutableTask;
 use crate::utils::{EXECUTION_CONTEXT, ExecutionContext};
 
+/// How long to wait for queued log lines to reach Hatchet before reporting a task
+/// complete. A wedged connection must not hold the task's completion event indefinitely.
+#[cfg(feature = "tracing")]
+const LOG_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 pub(crate) struct TaskRunEntry {
     handle: Option<JoinHandle<Result<(), HatchetError>>>,
     token: CancellationToken,
@@ -164,6 +169,11 @@ impl TaskDispatcher {
                             (3, format!("Task panicked: {panic_msg}"))
                         }
                     };
+
+                    // Drain any log lines the handler queued before reporting the task
+                    // complete, so a line emitted on its last statement is not lost.
+                    #[cfg(feature = "tracing")]
+                    crate::tracing::flush(LOG_FLUSH_TIMEOUT).await;
 
                     let event = dispatcher::StepActionEvent {
                         worker_id: worker_id.to_string(),

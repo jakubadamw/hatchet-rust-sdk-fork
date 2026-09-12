@@ -16,18 +16,26 @@ impl EventClient {
 }
 
 impl EventClient {
+    /// Send a single log line to the Hatchet API.
+    ///
+    /// `level` should be one of `DEBUG`, `INFO`, `WARN` or `ERROR` — the four variants the
+    /// server recognises — or `None` to leave the line unlevelled. `metadata` is a JSON
+    /// object serialised to a string, or an empty string when there is none.
     pub async fn put_log(
         &mut self,
         task_run_external_id: &str,
         message: String,
+        level: Option<String>,
+        metadata: String,
+        task_retry_count: Option<i32>,
     ) -> Result<(), crate::HatchetError> {
         let mut request = tonic::Request::new(PutLogRequest {
             task_run_external_id: task_run_external_id.to_string(),
             created_at: Some(proto_timestamp_now()?),
             message,
-            level: None,
-            metadata: String::from(""),
-            task_retry_count: None,
+            level,
+            metadata,
+            task_retry_count,
         });
 
         crate::utils::add_grpc_auth_header(&mut request, &self.api_token)?;

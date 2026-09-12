@@ -42,7 +42,11 @@ impl Context {
             let task_id = self.task_run_external_id.clone();
             tokio::spawn(async move {
                 while let Some(message) = rx.recv().await {
-                    if let Err(e) = log_client.event_client.put_log(&task_id, message).await {
+                    if let Err(e) = log_client
+                        .event_client
+                        .put_log(&task_id, message, None, String::new(), None)
+                        .await
+                    {
                         log::warn!("failed to send log to hatchet: {e}");
                     }
                 }

@@ -9,6 +9,14 @@ use super::types::{SimpleInput, SimpleOutput};
 
 const WORKER_READY_TIMEOUT: Duration = Duration::from_secs(15);
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(500);
+#[cfg(feature = "tracing")]
+const LOGS_TIMEOUT: Duration = Duration::from_secs(20);
+#[cfg(feature = "tracing")]
+const LOGS_POLL_INTERVAL: Duration = Duration::from_millis(500);
+#[cfg(feature = "tracing")]
+const RUN_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(feature = "tracing")]
+const RUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 pub struct TestHarness {
     pub hatchet: Hatchet,
@@ -120,6 +128,106 @@ impl TestHarness {
         });
         self.wait_for_worker_ready().await;
         WorkerGuard { handle }
+    }
+
+    #[cfg(feature = "tracing")]
+    /// Block until a workflow run leaves the `RUNNING`/`QUEUED` states, returning its
+    /// final status.
+    pub async fn wait_for_run(&self, workflow_run_id: &str) -> String {
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/api/v1/stable/workflow-runs/{}/status",
+            self.rest_base_url, workflow_run_id
+        );
+        let deadline = tokio::time::Instant::now() + RUN_TIMEOUT;
+
+        loop {
+            if let Ok(response) = client.get(&url).bearer_auth(&self.rest_token).send().await
+                && let Ok(body) = response.text().await
+            {
+                let status = body.trim().trim_matches('"').to_string();
+                if !matches!(status.as_str(), "RUNNING" | "QUEUED" | "") {
+                    return status;
+                }
+            }
+
+            if tokio::time::Instant::now() > deadline {
+                panic!("workflow run {workflow_run_id} did not finish within {RUN_TIMEOUT:?}");
+            }
+
+            tokio::time::sleep(RUN_POLL_INTERVAL).await;
+        }
+    }
+
+    #[cfg(feature = "tracing")]
+    /// Resolve a workflow run id to the external id of its first task.
+    ///
+    /// The logs endpoint is keyed by task run, not workflow run, so a single-task
+    /// workflow still needs this hop.
+    pub async fn first_task_run_id(&self, workflow_run_id: &str) -> String {
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/api/v1/stable/workflow-runs/{}",
+            self.rest_base_url, workflow_run_id
+        );
+
+        let body: serde_json::Value = client
+            .get(&url)
+            .bearer_auth(&self.rest_token)
+            .send()
+            .await
+            .expect("failed to fetch workflow run")
+            .json()
+            .await
+            .expect("workflow run response was not JSON");
+
+        body["tasks"][0]["taskExternalId"]
+            .as_str()
+            .expect("workflow run had no tasks")
+            .to_string()
+    }
+
+    #[cfg(feature = "tracing")]
+    /// Fetch the log lines the dashboard would show for a task run, as
+    /// `(level, message)` pairs in the order the API returns them.
+    ///
+    /// Log delivery is asynchronous, so this polls until at least `expected` lines are
+    /// present rather than reading once.
+    pub async fn task_logs(&self, task_run_id: &str, expected: usize) -> Vec<(String, String)> {
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/api/v1/stable/tasks/{}/logs",
+            self.rest_base_url, task_run_id
+        );
+        let deadline = tokio::time::Instant::now() + LOGS_TIMEOUT;
+
+        loop {
+            let mut lines = Vec::new();
+
+            if let Ok(response) = client.get(&url).bearer_auth(&self.rest_token).send().await
+                && let Ok(body) = response.json::<serde_json::Value>().await
+                && let Some(rows) = body.get("rows").and_then(|rows| rows.as_array())
+            {
+                for row in rows {
+                    lines.push((
+                        row.get("level")
+                            .and_then(|level| level.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        row.get("message")
+                            .and_then(|message| message.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                    ));
+                }
+            }
+
+            if lines.len() >= expected || tokio::time::Instant::now() > deadline {
+                return lines;
+            }
+
+            tokio::time::sleep(LOGS_POLL_INTERVAL).await;
+        }
     }
 
     async fn wait_for_worker_ready(&self) {

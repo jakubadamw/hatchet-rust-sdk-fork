@@ -90,5 +90,10 @@ path = "examples/input_json_schema.rs"
 name = "streaming"
 path = "examples/streaming.rs"
 
+[[example]]
+name = "logging"
+path = "examples/logging.rs"
+required-features = ["tracing"]
+
 [package.metadata.docs.rs]
 all-features = true

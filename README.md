@@ -153,6 +153,93 @@ async fn main() {
 }
 ```
 
+## Logging
+
+Anything a task logs with `ctx.log` shows up against that task run in the Hatchet dashboard:
+
+```rust no_run
+use hatchet_sdk::{Context, EmptyModel, anyhow, serde_json};
+
+async fn my_task(_input: EmptyModel, ctx: Context) -> anyhow::Result<serde_json::Value> {
+    ctx.log("starting simple task").await?;
+    Ok(serde_json::json!({"message": "success"}))
+}
+```
+
+That means threading `ctx` into every function that wants to log, though. Enable the
+`tracing` feature and you can instead let Hatchet pick up the `tracing` events your code
+already emits:
+
+```toml
+[dependencies]
+hatchet-sdk = { version = "...", features = ["tracing"] }
+```
+
+Add `HatchetLayer` to your subscriber stack, and every event recorded while a task handler
+is running is forwarded to that task run — however deep in the call stack it came from, and
+without the emitting code ever seeing a `Context`:
+
+```rust ignore
+use hatchet_sdk::{Context, EmptyModel, Hatchet, HatchetLayer, Register, anyhow, serde_json, tokio};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
+// A plain helper that has never heard of Hatchet.
+fn price_order(order_id: &str) -> u32 {
+    tracing::info!(order_id, "pricing order");
+    order_id.len() as u32 * 100
+}
+
+#[tokio::main]
+async fn main() {
+    let hatchet = Hatchet::from_env().await.unwrap();
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(HatchetLayer::new(&hatchet))
+        .init();
+
+    async fn my_task(_input: EmptyModel, _ctx: Context) -> anyhow::Result<serde_json::Value> {
+        let total = price_order("abc123");
+        tracing::info!(total, "priced order");
+        Ok(serde_json::json!({ "total": total }))
+    }
+
+    let task = hatchet.task("my-task", my_task).build().unwrap();
+
+    hatchet
+        .worker("example-worker")
+        .build()
+        .unwrap()
+        .add_task_or_workflow(&task)
+        .start()
+        .await
+        .unwrap();
+}
+```
+
+`Hatchet::init_tracing()` is a one-line shorthand for exactly the stack above, if you do not
+need to compose the layer with anything else.
+
+Events are mapped onto the four levels the dashboard understands — `DEBUG`, `INFO`, `WARN`
+and `ERROR` (`TRACE` is reported as `DEBUG`) — and an event's structured fields, plus those
+of any enclosing spans, are attached to the log line as metadata.
+
+A few things worth knowing:
+
+- **Events emitted outside a task run are ignored**, so a worker's own start-up logging does
+  not reach the dashboard.
+- **Only events at `INFO` and above are forwarded** by default. Use
+  `HatchetLayer::new(&hatchet).with_max_level(tracing::Level::DEBUG)` to widen that.
+- **This SDK's own events and those of the networking crates it is built on are dropped**
+  (`hatchet_sdk`, `h2`, `hyper`, `tonic`, `tower`, `rustls`, `reqwest`), because a `tracing`
+  registry otherwise sees every gRPC span in the process. Override the list with
+  `with_ignored_targets`.
+- **The current task run is tracked with a Tokio task-local, which a bare `tokio::spawn`
+  does not inherit.** An event emitted from a freshly spawned sub-task is dropped rather
+  than misattributed; use `ctx.log` from there instead.
+- Hatchet limits a task run to 1000 log lines.
+
 ## Declarative Workflow Design (DAGs)
 
 Hatchet workflows are designed in a Directed Acyclic Graph (DAG) format,

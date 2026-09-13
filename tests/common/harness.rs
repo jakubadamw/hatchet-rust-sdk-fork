@@ -131,8 +131,12 @@ impl TestHarness {
     }
 
     #[cfg(feature = "tracing")]
-    /// Block until a workflow run leaves the `RUNNING`/`QUEUED` states, returning its
-    /// final status.
+    /// Block until a workflow run reaches `COMPLETED`, `FAILED` or `CANCELLED`, returning
+    /// that status.
+    ///
+    /// A freshly triggered run can take a moment to reach the read model behind the REST
+    /// API, which answers with a 404 until it does. Only a successful response carrying a
+    /// final status ends the wait; anything else is retried.
     pub async fn wait_for_run(&self, workflow_run_id: &str) -> String {
         let client = reqwest::Client::new();
         let url = format!(
@@ -143,10 +147,11 @@ impl TestHarness {
 
         loop {
             if let Ok(response) = client.get(&url).bearer_auth(&self.rest_token).send().await
+                && response.status().is_success()
                 && let Ok(body) = response.text().await
             {
                 let status = body.trim().trim_matches('"').to_string();
-                if !matches!(status.as_str(), "RUNNING" | "QUEUED" | "") {
+                if matches!(status.as_str(), "COMPLETED" | "FAILED" | "CANCELLED") {
                     return status;
                 }
             }

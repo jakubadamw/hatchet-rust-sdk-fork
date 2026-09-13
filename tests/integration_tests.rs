@@ -2,6 +2,8 @@ use futures::StreamExt;
 use hatchet_sdk::{HatchetError, Runnable};
 
 mod common;
+#[cfg(feature = "tracing")]
+use common::RunStatus;
 use common::{SimpleInput, SimpleOutput, TestHarness, hatchet_version_at_least};
 
 #[tokio::test]
@@ -605,7 +607,7 @@ async fn test_tracing_layer_sends_logs_to_hatchet() {
         .unwrap();
 
     // Wait for the run to finish so the dispatcher has flushed the queued lines.
-    assert_eq!("COMPLETED", t.wait_for_run(&run_id).await);
+    assert_eq!(RunStatus::Completed, t.wait_for_run(&run_id).await);
 
     let task_run_id = t.first_task_run_id(&run_id).await;
     let logs = t.task_logs(&task_run_id, 3).await;

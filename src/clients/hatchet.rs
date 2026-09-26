@@ -4,6 +4,7 @@ use std::time::Duration;
 use tonic::transport::{Channel, ClientTlsConfig};
 
 use super::grpc::{AdminClient, DispatcherClient, EventClient, WorkflowClient};
+use super::rate_limits::RateLimitsClient;
 use crate::{
     Configuration, CronsClient, HatchetConfig, HatchetError, RunsClient, SchedulesClient,
     TlsStrategy,
@@ -25,6 +26,7 @@ pub struct Hatchet {
     pub workflow_rest_client: RunsClient,
     pub crons: CronsClient,
     pub schedules: SchedulesClient,
+    pub rate_limits: RateLimitsClient,
 }
 
 impl Hatchet {
@@ -38,6 +40,7 @@ impl Hatchet {
         workflow_rest_client: RunsClient,
         crons: CronsClient,
         schedules: SchedulesClient,
+        rate_limits: RateLimitsClient,
     ) -> Result<Self, HatchetError> {
         Ok(Self {
             server_url,
@@ -49,6 +52,7 @@ impl Hatchet {
             workflow_rest_client,
             crons,
             schedules,
+            rate_limits,
         })
     }
 
@@ -148,6 +152,7 @@ impl Hatchet {
 
         let crons = CronsClient::new(rest_configuration.clone(), config.tenant_id.clone());
         let schedules = SchedulesClient::new(rest_configuration.clone(), config.tenant_id.clone());
+        let rate_limits = RateLimitsClient::new(workflow_client.clone());
 
         Self::new(
             server_url.to_string(),
@@ -159,6 +164,7 @@ impl Hatchet {
             workflow_rest_client,
             crons,
             schedules,
+            rate_limits,
         )
         .await
     }
@@ -174,6 +180,7 @@ impl Hatchet {
     /// * `default_priority` - The priority of the workflow. Higher values will cause this workflow to have priority in scheduling.
     /// * `on_events` - A list of event triggers for the workflow - events which cause the workflow to be run.
     /// * `cron_triggers` - A list of cron triggers for the workflow.
+    /// * `concurrency` - A list of [`ConcurrencyExpression`](crate::ConcurrencyExpression)s limiting how many runs of the workflow can execute at the same time.
     ///
     /// ### Examples:
     /// ```no_run
@@ -219,6 +226,8 @@ impl Hatchet {
     /// * `retries` - The number of times to retry the task before failing.
     /// * `schedule_timeout` - The maximum time allowed for scheduling the task. Defaults to five minutes.
     /// * `execution_timeout` - The maximum time allowed for executing the task. Defaults to one minute.
+    /// * `concurrency` - A list of [`ConcurrencyExpression`](crate::ConcurrencyExpression)s limiting how many runs of the task can execute at the same time.
+    /// * `rate_limits` - A list of [`RateLimit`](crate::RateLimit)s consumed by each run of the task.
     ///
     ///
     /// ### Examples:

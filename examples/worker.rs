@@ -20,6 +20,14 @@ use dynamic_child_spawning::create_child_spawning_workflow;
 mod input_json_schema;
 use input_json_schema::create_schema_workflow;
 
+#[path = "concurrency.rs"]
+mod concurrency;
+use concurrency::create_concurrency_task;
+
+#[path = "rate_limits.rs"]
+mod rate_limits;
+use rate_limits::create_rate_limit_task;
+
 #[path = "streaming.rs"]
 mod streaming;
 use streaming::create_streaming_task;
@@ -40,6 +48,8 @@ async fn main() {
     let (parent_workflow, child_workflow) = create_child_spawning_workflow().await;
     let schema_workflow = create_schema_workflow().await;
     let streaming_task = create_streaming_task().await;
+    let concurrency_task = create_concurrency_task().await;
+    let rate_limit_task = create_rate_limit_task().await;
 
     hatchet
         .worker("example-worker")
@@ -52,6 +62,8 @@ async fn main() {
         .add_task_or_workflow(&child_workflow)
         .add_task_or_workflow(&schema_workflow)
         .add_task_or_workflow(&streaming_task)
+        .add_task_or_workflow(&concurrency_task)
+        .add_task_or_workflow(&rate_limit_task)
         .start()
         .await
         .unwrap();

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use super::flow_control::{ConcurrencyExpression, RateLimit};
 use super::workflow::DefaultFilter;
 use super::{ExtractRunnableOutput, TriggerWorkflowOptions};
 use crate::clients::grpc::v1::workflows::{CreateTaskOpts, CreateWorkflowVersionRequest};
@@ -90,6 +91,10 @@ pub struct Task<I, O> {
     execution_timeout: std::time::Duration,
     #[builder(default)]
     input_json_schema: Option<serde_json::Value>,
+    #[builder(default = vec![])]
+    concurrency: Vec<ConcurrencyExpression>,
+    #[builder(default = vec![])]
+    rate_limits: Vec<RateLimit>,
 }
 
 impl<I, O> Task<I, O>
@@ -134,18 +139,31 @@ where
             inputs: String::from("{{}}"),
             parents: self.parents.clone(),
             retries: self.retries,
-            rate_limits: vec![],
+            rate_limits: self
+                .rate_limits
+                .iter()
+                .map(|rate_limit| rate_limit.to_proto())
+                .collect(),
             worker_labels: std::collections::HashMap::new(),
             backoff_factor: None,
             backoff_max_seconds: None,
-            concurrency: vec![],
+            concurrency: self
+                .concurrency
+                .iter()
+                .map(|concurrency| concurrency.to_proto())
+                .collect(),
             conditions: None,
             schedule_timeout: Some(duration_to_expr(self.schedule_timeout)),
         }
     }
 
     pub(crate) fn to_standalone_workflow_proto(&self) -> CreateWorkflowVersionRequest {
-        let task_proto = self.to_task_proto(&self.name);
+        // A standalone task's concurrency applies to the workflow wrapping it. Keep it off the
+        // task itself so that the limit is not enforced twice.
+        let task_proto = CreateTaskOpts {
+            concurrency: vec![],
+            ..self.to_task_proto(&self.name)
+        };
         CreateWorkflowVersionRequest {
             name: self.name.clone().to_lowercase(),
             description: self.description.clone(),
@@ -158,7 +176,11 @@ where
             on_failure_task: None,
             sticky: None,
             default_priority: Some(self.default_priority),
-            concurrency_arr: vec![],
+            concurrency_arr: self
+                .concurrency
+                .iter()
+                .map(|concurrency| concurrency.to_proto())
+                .collect(),
             default_filters: self
                 .default_filters
                 .clone()

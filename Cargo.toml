@@ -76,3 +76,11 @@ path = "examples/input_json_schema.rs"
 [[example]]
 name = "streaming"
 path = "examples/streaming.rs"
+
+[[example]]
+name = "concurrency"
+path = "examples/concurrency.rs"
+
+[[example]]
+name = "rate_limits"
+path = "examples/rate_limits.rs"

@@ -1,5 +1,11 @@
+use std::collections::HashMap;
+
 use futures::StreamExt;
-use hatchet_sdk::{HatchetError, Runnable};
+use hatchet_sdk::{
+    ConcurrencyExpression, ConcurrencyLimitStrategy, HatchetError, RateLimit, RateLimitDuration,
+    Runnable,
+};
+use serde::{Deserialize, Serialize};
 
 mod common;
 use common::{SimpleInput, SimpleOutput, TestHarness, hatchet_version_at_least};
@@ -547,4 +553,196 @@ async fn test_workflow_schedule_convenience() {
         .delete(&scheduled.metadata_id)
         .await
         .unwrap();
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct GroupInput {
+    group: String,
+}
+
+impl GroupInput {
+    fn new(group: &str) -> Self {
+        Self {
+            group: group.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct TimedOutput {
+    started_at_ms: i64,
+    finished_at_ms: i64,
+}
+
+impl TimedOutput {
+    fn overlaps(&self, other: &TimedOutput) -> bool {
+        self.started_at_ms < other.finished_at_ms && other.started_at_ms < self.finished_at_ms
+    }
+}
+
+/// A handler that takes long enough for runs triggered together to overlap unless a
+/// concurrency limit keeps them apart.
+async fn timed_handler(
+    _input: GroupInput,
+    _ctx: hatchet_sdk::Context,
+) -> anyhow::Result<TimedOutput> {
+    let started_at_ms = chrono::Utc::now().timestamp_millis();
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    Ok(TimedOutput {
+        started_at_ms,
+        finished_at_ms: chrono::Utc::now().timestamp_millis(),
+    })
+}
+
+fn one_run_per_group() -> Vec<ConcurrencyExpression> {
+    vec![ConcurrencyExpression::new(
+        "input.group",
+        1,
+        ConcurrencyLimitStrategy::GroupRoundRobin,
+    )]
+}
+
+#[tokio::test]
+async fn test_standalone_task_concurrency() {
+    let t = TestHarness::new("task-concurrency").await;
+
+    let task = t
+        .hatchet
+        .task(&t.prefixed("step"), timed_handler)
+        .concurrency(one_run_per_group())
+        .build()
+        .unwrap();
+
+    let _worker = t.spawn_worker_for_task(&task).await;
+
+    let (group_a, group_b) = (GroupInput::new("a"), GroupInput::new("b"));
+    let (first, second, other) = tokio::join!(
+        task.run(&group_a, None),
+        task.run(&group_a, None),
+        task.run(&group_b, None),
+    );
+    let (first, second, other) = (first.unwrap(), second.unwrap(), other.unwrap());
+
+    assert!(
+        !first.overlaps(&second),
+        "runs sharing a concurrency key overlapped: {first:?} and {second:?}"
+    );
+    assert!(
+        other.overlaps(&first) || other.overlaps(&second),
+        "a run with a different concurrency key waited for the others: {other:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_workflow_task_concurrency() {
+    let t = TestHarness::new("workflow-task-concurrency").await;
+
+    let task = t
+        .hatchet
+        .task(&t.prefixed("step"), timed_handler)
+        .concurrency(one_run_per_group())
+        .build()
+        .unwrap();
+
+    let workflow = t
+        .hatchet
+        .workflow::<GroupInput, HashMap<String, TimedOutput>>(&t.prefixed("workflow"))
+        .build()
+        .unwrap()
+        .add_task(&task);
+
+    let _worker = t.spawn_worker_for_workflow(&workflow).await;
+
+    let group_a = GroupInput::new("a");
+    let (first, second) = tokio::join!(workflow.run(&group_a, None), workflow.run(&group_a, None));
+    let first = &first.unwrap()[&t.prefixed("step")];
+    let second = &second.unwrap()[&t.prefixed("step")];
+
+    assert!(
+        !first.overlaps(second),
+        "runs sharing a concurrency key overlapped: {first:?} and {second:?}"
+    );
+}
+
+/// How long to wait for a run to prove that a rate limit holds it back.
+const RATE_LIMITED_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[tokio::test]
+async fn test_static_rate_limit() {
+    let t = TestHarness::new("static-rate-limit").await;
+    let key = t.prefixed("key");
+
+    t.hatchet
+        .rate_limits
+        .put(&key, 1, RateLimitDuration::Minute)
+        .await
+        .unwrap();
+
+    let task = t
+        .hatchet
+        .task(
+            &t.prefixed("step"),
+            async move |input: SimpleInput,
+                        _ctx: hatchet_sdk::Context|
+                        -> anyhow::Result<SimpleOutput> {
+                Ok(SimpleOutput {
+                    transformed_message: input.message,
+                })
+            },
+        )
+        .rate_limits(vec![RateLimit::Static {
+            key,
+            units: 1.into(),
+        }])
+        .build()
+        .unwrap();
+
+    let _worker = t.spawn_worker_for_task(&task).await;
+
+    let input = SimpleInput {
+        message: "hello".to_string(),
+    };
+    task.run(&input, None).await.unwrap();
+
+    assert!(
+        tokio::time::timeout(RATE_LIMITED_WAIT, task.run(&input, None))
+            .await
+            .is_err(),
+        "a run completed after the static rate limit was used up"
+    );
+}
+
+#[tokio::test]
+async fn test_dynamic_rate_limit() {
+    let t = TestHarness::new("dynamic-rate-limit").await;
+
+    let task = t
+        .hatchet
+        .task(
+            &t.prefixed("step"),
+            async move |input: GroupInput,
+                        _ctx: hatchet_sdk::Context|
+                        -> anyhow::Result<GroupInput> { Ok(input) },
+        )
+        .rate_limits(vec![RateLimit::Dynamic {
+            key_expression: String::from("input.group"),
+            units: 1.into(),
+            limit: 1.into(),
+            duration: RateLimitDuration::Minute,
+        }])
+        .build()
+        .unwrap();
+
+    let _worker = t.spawn_worker_for_task(&task).await;
+
+    task.run(&GroupInput::new("a"), None).await.unwrap();
+    // Each key gets its own limit, so a different key is not held back.
+    task.run(&GroupInput::new("b"), None).await.unwrap();
+
+    assert!(
+        tokio::time::timeout(RATE_LIMITED_WAIT, task.run(&GroupInput::new("a"), None))
+            .await
+            .is_err(),
+        "a run completed after the rate limit for its key was used up"
+    );
 }

@@ -245,3 +245,66 @@ async fn main() {
     );
 }
 ```
+
+## Concurrency and Rate Limits
+
+Concurrency limits control how many runs sharing a key can execute at the same time. The key is a CEL
+expression evaluated against the run, such as `input.user_id`. Set `concurrency` on a workflow or a standalone task to limit its runs, or on a
+task that is part of a workflow to limit that task only.
+
+Rate limits cap how many units a task can consume in a time window. A static limit has a fixed key
+and has to be created with `hatchet.rate_limits.put(...)` first. A dynamic limit computes its key
+per run, so each key, e.g. each user, gets its own limit.
+
+```rust no_run
+use hatchet_sdk::serde::{Deserialize, Serialize};
+use hatchet_sdk::{
+    ConcurrencyExpression, ConcurrencyLimitStrategy, Context, Hatchet, RateLimit,
+    RateLimitDuration, anyhow, tokio,
+};
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "hatchet_sdk::serde")]
+struct UserInput {
+    user_id: String,
+}
+
+#[tokio::main]
+async fn main() {
+    let hatchet = Hatchet::from_env().await.unwrap();
+
+    // Allow 100 calls to the external API per minute across all runs.
+    hatchet
+        .rate_limits
+        .put("external-api", 100, RateLimitDuration::Minute)
+        .await
+        .unwrap();
+
+    let task = hatchet
+        .task(
+            "call-external-api",
+            async move |_input: UserInput, _ctx: Context| -> anyhow::Result<()> { Ok(()) },
+        )
+        // Run at most two tasks per user at a time, sharing slots fairly between users.
+        .concurrency(vec![ConcurrencyExpression::new(
+            "input.user_id",
+            2,
+            ConcurrencyLimitStrategy::GroupRoundRobin,
+        )])
+        .rate_limits(vec![
+            RateLimit::Static {
+                key: String::from("external-api"),
+                units: 1.into(),
+            },
+            // Allow each user ten runs per hour.
+            RateLimit::Dynamic {
+                key_expression: String::from("input.user_id"),
+                units: 1.into(),
+                limit: 10.into(),
+                duration: RateLimitDuration::Hour,
+            },
+        ])
+        .build()
+        .unwrap();
+}
+```

@@ -33,7 +33,8 @@ impl ConcurrencyLimitStrategy {
 ///
 /// Set on a workflow, it limits concurrent runs of the workflow. Set on a standalone task, it
 /// limits concurrent runs of that task. Set on a task that is part of a workflow, it limits
-/// concurrent runs of that task only.
+/// concurrent runs of that task only. To have several tasks or workflows count against one
+/// limit, create the entry with [`ConcurrencyExpression::shared`].
 ///
 /// ```
 /// use hatchet_sdk::{ConcurrencyExpression, ConcurrencyLimitStrategy};
@@ -53,6 +54,8 @@ pub struct ConcurrencyExpression {
     pub max_runs: i32,
     /// What to do with a run once the limit is reached.
     pub limit_strategy: ConcurrencyLimitStrategy,
+    /// The name of the limit when it is shared across the tenant, or `None` when it is not.
+    pub shared_name: Option<String>,
 }
 
 impl ConcurrencyExpression {
@@ -65,6 +68,43 @@ impl ConcurrencyExpression {
             expression: expression.into(),
             max_runs,
             limit_strategy,
+            shared_name: None,
+        }
+    }
+
+    /// A limit shared across the tenant: every task or workflow declaring an entry with the
+    /// same `name` counts against the same limit.
+    ///
+    /// The limit is defined by whichever registration came last, so declare it with the same
+    /// expression, maximum and strategy everywhere, e.g. by building it in one place. A
+    /// workflow with several tasks can only declare a shared limit at the workflow level if the
+    /// engine runs it with the DAG operator; declaring it on the tasks always works. When a task
+    /// or workflow declares several shared limits, every declaration has to list them in the
+    /// same order, otherwise registration fails.
+    ///
+    /// Requires Hatchet v0.106.0 or later. Older engines ignore the name and treat the entry as
+    /// an ordinary limit.
+    ///
+    /// ```
+    /// use hatchet_sdk::{ConcurrencyExpression, ConcurrencyLimitStrategy};
+    ///
+    /// // At most two renders at a time, across every task that declares this limit.
+    /// let render_limit = ConcurrencyExpression::shared(
+    ///     "render-page",
+    ///     "'all'",
+    ///     2,
+    ///     ConcurrencyLimitStrategy::GroupRoundRobin,
+    /// );
+    /// ```
+    pub fn shared(
+        name: impl Into<String>,
+        expression: impl Into<String>,
+        max_runs: i32,
+        limit_strategy: ConcurrencyLimitStrategy,
+    ) -> Self {
+        Self {
+            shared_name: Some(name.into()),
+            ..Self::new(expression, max_runs, limit_strategy)
         }
     }
 
@@ -73,6 +113,8 @@ impl ConcurrencyExpression {
             expression: self.expression.clone(),
             max_runs: Some(self.max_runs),
             limit_strategy: Some(self.limit_strategy.to_proto() as i32),
+            name: self.shared_name.clone(),
+            is_tenant_scoped: self.shared_name.is_some().then_some(true),
         }
     }
 }
@@ -242,6 +284,38 @@ mod tests {
         assert_eq!(
             proto.limit_strategy,
             Some(ConcurrencyLimitStrategyProto::GroupRoundRobin as i32)
+        );
+    }
+
+    #[test]
+    fn unshared_concurrency_expression_leaves_the_shared_fields_unset() {
+        let proto =
+            ConcurrencyExpression::new("input.group", 1, ConcurrencyLimitStrategy::CancelNewest)
+                .to_proto();
+
+        assert_eq!(proto.name, None);
+        assert_eq!(proto.is_tenant_scoped, None);
+    }
+
+    #[test]
+    fn shared_concurrency_expression_to_proto() {
+        let proto = ConcurrencyExpression::shared(
+            "render-page",
+            "'all'",
+            2,
+            ConcurrencyLimitStrategy::GroupRoundRobin,
+        )
+        .to_proto();
+
+        assert_eq!(
+            proto,
+            ConcurrencyProto {
+                expression: String::from("'all'"),
+                max_runs: Some(2),
+                limit_strategy: Some(ConcurrencyLimitStrategyProto::GroupRoundRobin as i32),
+                name: Some(String::from("render-page")),
+                is_tenant_scoped: Some(true),
+            }
         );
     }
 

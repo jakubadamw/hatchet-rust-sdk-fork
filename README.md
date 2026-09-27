@@ -252,6 +252,10 @@ Concurrency limits control how many runs sharing a key can execute at the same t
 expression evaluated against the run, such as `input.user_id`. Set `concurrency` on a workflow or a standalone task to limit its runs, or on a
 task that is part of a workflow to limit that task only.
 
+To make several tasks or workflows count against one limit, build the entry with
+`ConcurrencyExpression::shared(name, ...)` and declare it on each of them. Shared limits require
+Hatchet v0.106.0 or later.
+
 Rate limits cap how many units a task can consume in a time window. A static limit has a fixed key
 and has to be created with `hatchet.rate_limits.put(...)` first. A dynamic limit computes its key
 per run, so each key, e.g. each user, gets its own limit.

@@ -664,6 +664,60 @@ async fn test_workflow_task_concurrency() {
     );
 }
 
+/// A standalone task and a task inside a workflow declare the same shared limit, so their
+/// runs queue behind each other even though they belong to different workflows.
+#[tokio::test]
+async fn test_shared_concurrency() {
+    if !hatchet_version_at_least(0, 106) {
+        return;
+    }
+
+    let standalone = TestHarness::new("shared-concurrency-standalone").await;
+    let in_workflow = TestHarness::new("shared-concurrency-in-workflow").await;
+    let shared_limit = vec![ConcurrencyExpression::shared(
+        "shared-concurrency-limit",
+        "input.group",
+        1,
+        ConcurrencyLimitStrategy::GroupRoundRobin,
+    )];
+
+    let standalone_task = standalone
+        .hatchet
+        .task(&standalone.prefixed("step"), timed_handler)
+        .concurrency(shared_limit.clone())
+        .build()
+        .unwrap();
+
+    let workflow_task = in_workflow
+        .hatchet
+        .task(&in_workflow.prefixed("step"), timed_handler)
+        .concurrency(shared_limit)
+        .build()
+        .unwrap();
+    let workflow = in_workflow
+        .hatchet
+        .workflow::<GroupInput, HashMap<String, TimedOutput>>(&in_workflow.prefixed("workflow"))
+        .build()
+        .unwrap()
+        .add_task(&workflow_task);
+
+    let _standalone_worker = standalone.spawn_worker_for_task(&standalone_task).await;
+    let _workflow_worker = in_workflow.spawn_worker_for_workflow(&workflow).await;
+
+    let group_a = GroupInput::new("a");
+    let (standalone_output, workflow_output) = tokio::join!(
+        standalone_task.run(&group_a, None),
+        workflow.run(&group_a, None)
+    );
+    let standalone_output = standalone_output.unwrap();
+    let workflow_output = &workflow_output.unwrap()[&in_workflow.prefixed("step")];
+
+    assert!(
+        !standalone_output.overlaps(workflow_output),
+        "runs sharing a limit overlapped: {standalone_output:?} and {workflow_output:?}"
+    );
+}
+
 /// How long to wait for a run to prove that a rate limit holds it back.
 const RATE_LIMITED_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 

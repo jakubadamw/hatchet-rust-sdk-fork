@@ -13,6 +13,20 @@ use crate::error::HatchetError;
 use crate::runnables::ExecutableTask;
 use crate::utils::{EXECUTION_CONTEXT, ExecutionContext};
 
+/// The part of an assigned action's payload a task is run with.
+#[derive(serde::Deserialize)]
+struct ActionPayload {
+    input: serde_json::Value,
+    /// The outputs of the task's parents in a DAG, keyed by their step names.
+    ///
+    /// The engine fills these in as it assigns the task, and they are read
+    /// from here rather than from the run's stored input: an engine that runs
+    /// DAGs on its DAG operator stores only the parents' run IDs there, and
+    /// the REST API returns the stored input as it is, with no parents.
+    #[serde(default)]
+    parents: HashMap<String, serde_json::Value>,
+}
+
 pub(crate) struct TaskRunEntry {
     handle: Option<JoinHandle<Result<(), HatchetError>>>,
     token: CancellationToken,
@@ -85,11 +99,7 @@ impl TaskDispatcher {
             child_index: 0,
         };
 
-        let context = Context::new(
-            self.client.clone(),
-            &message.workflow_run_id,
-            &message.task_run_external_id,
-        );
+        let context_client = self.client.clone();
 
         let task_runs_cleanup = self.task_runs.clone();
         let cleanup_id = task_run_external_id.clone();
@@ -116,17 +126,21 @@ impl TaskDispatcher {
         let handle = tokio::spawn(async move {
             let result = EXECUTION_CONTEXT
                 .scope(execution_context.into(), async move {
-                    let raw_json: serde_json::Value = serde_json::from_str(&message.action_payload)
-                        .expect("could not parse payload as JSON");
-                    let input_value = raw_json
-                        .get("input")
-                        .cloned()
-                        .expect("missing `input` field");
+                    let ActionPayload { input, parents } =
+                        serde_json::from_str(&message.action_payload)
+                            .expect("could not parse payload as JSON");
+
+                    let context = Context::new(
+                        context_client,
+                        &message.workflow_run_id,
+                        &message.task_run_external_id,
+                        parents,
+                    );
 
                     let result: Result<
                         Result<serde_json::Value, crate::runnables::TaskError>,
                         Box<dyn std::any::Any + Send>,
-                    > = AssertUnwindSafe(task.execute(input_value, context))
+                    > = AssertUnwindSafe(task.execute(input, context))
                         .catch_unwind()
                         .await;
 
@@ -254,5 +268,36 @@ impl TaskDispatcher {
             .send_step_action_event(event)
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_payload_carries_the_parents_outputs() {
+        let payload: ActionPayload = serde_json::from_str(
+            r#"{
+                "input": {"issue": 1},
+                "parents": {"first-step": {"pages": 12}},
+                "triggered_by": "manual",
+                "dag_parent_task_run_ids": ["bc819be7-08bf-4223-9c38-5eed81ae41b9"]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(payload.input, serde_json::json!({"issue": 1}));
+        assert_eq!(
+            payload.parents,
+            HashMap::from([(String::from("first-step"), serde_json::json!({"pages": 12}))])
+        );
+    }
+
+    #[test]
+    fn action_payload_without_parents_has_none() {
+        let payload: ActionPayload = serde_json::from_str(r#"{"input": {}}"#).unwrap();
+
+        assert!(payload.parents.is_empty());
     }
 }

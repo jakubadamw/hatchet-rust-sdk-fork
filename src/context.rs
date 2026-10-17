@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
@@ -12,6 +13,7 @@ pub struct Context {
     client: Hatchet,
     workflow_run_id: String,
     task_run_external_id: String,
+    parents: HashMap<String, serde_json::Value>,
 }
 
 impl std::fmt::Debug for Context {
@@ -24,7 +26,12 @@ impl std::fmt::Debug for Context {
 }
 
 impl Context {
-    pub(crate) fn new(client: Hatchet, workflow_run_id: &str, task_run_external_id: &str) -> Self {
+    pub(crate) fn new(
+        client: Hatchet,
+        workflow_run_id: &str,
+        task_run_external_id: &str,
+        parents: HashMap<String, serde_json::Value>,
+    ) -> Self {
         Self {
             log_tx: OnceLock::new(),
             stream_tx: OnceLock::new(),
@@ -32,6 +39,7 @@ impl Context {
             client,
             workflow_run_id: workflow_run_id.to_string(),
             task_run_external_id: task_run_external_id.to_string(),
+            parents,
         }
     }
 
@@ -77,6 +85,9 @@ impl Context {
 
     /// Get the output of a parent task in a DAG.
     ///
+    /// The outputs are the ones the engine handed over with the task, so this
+    /// makes no request of its own.
+    ///
     /// ```compile_fail
     /// let task = hatchet.task("my-task", |_input: EmptyModel, ctx: Context| async move {
     ///     let parent_output = ctx.parent_output("parent_task").await.unwrap();
@@ -87,25 +98,11 @@ impl Context {
         &self,
         parent_step_name: &str,
     ) -> Result<serde_json::Value, HatchetError> {
-        let workflow_run = self.get_current_workflow().await?;
-
-        let current_task = workflow_run
-            .tasks
-            .iter()
-            .find(|task| task.task_external_id == self.task_run_external_id)
-            .ok_or_else(|| HatchetError::ParentTaskNotFound {
+        self.parents.get(parent_step_name).cloned().ok_or_else(|| {
+            HatchetError::ParentTaskNotFound {
                 parent_step_name: parent_step_name.to_string(),
-            })?;
-
-        let parent = current_task
-            .input
-            .parents
-            .get(parent_step_name)
-            .ok_or_else(|| HatchetError::ParentTaskNotFound {
-                parent_step_name: parent_step_name.to_string(),
-            })?;
-
-        Ok(parent.0.clone())
+            }
+        })
     }
 
     pub async fn filter_payload(&self) -> Result<serde_json::Value, HatchetError> {

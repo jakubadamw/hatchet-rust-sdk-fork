@@ -290,4 +290,35 @@ impl Hatchet {
             .name(name.to_string())
             .client(self.clone())
     }
+
+    /// Install a global `tracing` subscriber that prints to stderr and forwards events
+    /// emitted inside a task handler to the Hatchet dashboard.
+    ///
+    /// This is the batteries-included option. To compose the Hatchet layer with a
+    /// subscriber stack of your own, build a
+    /// [`HatchetLayer`](crate::HatchetLayer) directly instead.
+    ///
+    /// Returns an error if a global subscriber has already been installed.
+    ///
+    /// Requires the `tracing` feature.
+    ///
+    /// ```no_run
+    /// use hatchet_sdk::Hatchet;
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let hatchet = Hatchet::from_env().await.unwrap();
+    ///     hatchet.init_tracing().unwrap();
+    /// }
+    /// ```
+    #[cfg(feature = "tracing")]
+    pub fn init_tracing(&self) -> Result<(), HatchetError> {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .with(crate::tracing::HatchetLayer::new(self))
+            .try_init()
+            .map_err(|error| HatchetError::InternalError(error.to_string()))
+    }
 }

@@ -4,6 +4,8 @@ pub mod config;
 pub mod context;
 pub mod error;
 pub mod runnables;
+#[cfg(feature = "tracing")]
+pub mod tracing;
 pub mod utils;
 pub mod worker;
 
@@ -21,6 +23,8 @@ pub(crate) use config::{HatchetConfig, TlsStrategy};
 pub use context::Context;
 pub use error::HatchetError;
 pub use runnables::{Runnable, Task, TriggerWorkflowOptionsBuilder, Workflow};
+#[cfg(feature = "tracing")]
+pub use tracing::HatchetLayer;
 pub use utils::EmptyModel;
 pub(crate) use utils::{EXECUTION_CONTEXT, ExecutionContext, proto_timestamp_now};
 pub use worker::{Register, Worker};

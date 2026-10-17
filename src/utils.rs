@@ -53,6 +53,9 @@ pub(crate) struct ExecutionContext {
     pub(crate) workflow_run_id: String,
     pub(crate) task_run_external_id: String,
     pub(crate) child_index: i32,
+    /// Which attempt of the task this is. The dashboard uses it to group log lines by
+    /// attempt, so a retry's logs are not interleaved with the original run's.
+    pub(crate) retry_count: i32,
 }
 
 tokio::task_local! {

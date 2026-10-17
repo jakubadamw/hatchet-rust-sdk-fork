@@ -2,6 +2,7 @@ use derive_builder::Builder;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use super::flow_control::ConcurrencyExpression;
 use super::{ExecutableTask, ExtractRunnableOutput, Task, TriggerWorkflowOptions};
 use crate::clients::grpc::v1::workflows::{
     CreateTaskOpts, CreateWorkflowVersionRequest, DefaultFilter as DefaultFilterProto,
@@ -37,6 +38,8 @@ pub struct Workflow<I, O> {
     default_filters: Vec<DefaultFilter>,
     #[builder(default)]
     input_json_schema: Option<serde_json::Value>,
+    #[builder(default = vec![])]
+    concurrency: Vec<ConcurrencyExpression>,
     #[builder(default = std::marker::PhantomData)]
     _phantom: std::marker::PhantomData<(I, O)>,
 }
@@ -77,7 +80,11 @@ where
             on_failure_task: None,
             sticky: None,
             default_priority: Some(self.default_priority),
-            concurrency_arr: vec![],
+            concurrency_arr: self
+                .concurrency
+                .iter()
+                .map(|concurrency| concurrency.to_proto())
+                .collect(),
             default_filters: self
                 .default_filters
                 .clone()

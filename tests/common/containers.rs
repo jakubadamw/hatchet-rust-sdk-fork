@@ -82,9 +82,9 @@ impl SharedContainers {
         )
         .with_exposed_port(8888.tcp())
         .with_exposed_port(7077.tcp())
-        .with_wait_for(WaitFor::message_on_either_std(
-            "created tenant 707d0855-80ab-4e1f-a156-f1c4546cbf52",
-        ))
+        // Newer engines colour their logs, which puts escape codes between the message and the
+        // tenant ID, so match only the part of the line that both formats share.
+        .with_wait_for(WaitFor::message_on_either_std("created tenant"))
         .with_wait_for(WaitFor::Healthcheck(HealthWaitStrategy::new()))
         .with_health_check(
             Healthcheck::cmd(vec!["nc", "-z", "localhost", "7077"])

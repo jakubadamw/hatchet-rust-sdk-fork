@@ -1,5 +1,5 @@
 use super::v0::workflows::workflow_service_client::WorkflowServiceClient;
-use super::v0::workflows::{TriggerWorkflowRequest, TriggerWorkflowResponse};
+use super::v0::workflows::{PutRateLimitRequest, TriggerWorkflowRequest, TriggerWorkflowResponse};
 use crate::HatchetError;
 use crate::{EXECUTION_CONTEXT, ExecutionContext};
 use std::sync::Arc;
@@ -32,6 +32,20 @@ impl WorkflowClient {
             .await
             .map_err(|e| HatchetError::GrpcErrorStatus(e.message().to_string()))?;
         Ok(response.into_inner())
+    }
+
+    pub async fn put_rate_limit(
+        &self,
+        put_rate_limit_request: PutRateLimitRequest,
+    ) -> Result<(), HatchetError> {
+        let mut request = tonic::Request::new(put_rate_limit_request);
+        crate::utils::add_grpc_auth_header(&mut request, &self.api_token)?;
+        let mut client = self.client.lock().await;
+        client
+            .put_rate_limit(request)
+            .await
+            .map_err(|e| HatchetError::GrpcErrorStatus(e.message().to_string()))?;
+        Ok(())
     }
 }
 

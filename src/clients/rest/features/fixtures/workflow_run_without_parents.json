@@ -1,0 +1,99 @@
+{
+  "run": {
+    "additionalMetadata": {},
+    "createdAt": "2026-10-23T16:43:01.987753Z",
+    "displayName": "transcribe-page-1",
+    "duration": 37257,
+    "errorMessage": "",
+    "finishedAt": "2026-10-23T16:43:39.250969Z",
+    "input": {
+      "page": 3
+    },
+    "metadata": {
+      "createdAt": "2026-10-23T16:43:01.971037Z",
+      "id": "00000000-0000-0000-0000-000000000001",
+      "updatedAt": "2026-10-23T16:43:01.971037Z"
+    },
+    "output": {
+      "characters": 1024
+    },
+    "startedAt": "2026-10-23T16:43:01.993517Z",
+    "status": "COMPLETED",
+    "tenantId": "00000000-0000-0000-0000-000000000004",
+    "workflowId": "00000000-0000-0000-0000-000000000005",
+    "workflowVersionId": "00000000-0000-0000-0000-000000000006"
+  },
+  "shape": [
+    {
+      "childrenStepIds": [],
+      "stepId": "00000000-0000-0000-0000-000000000002",
+      "taskExternalId": "00000000-0000-0000-0000-000000000001",
+      "taskName": "transcribe-page"
+    }
+  ],
+  "taskEvents": [],
+  "tasks": [
+    {
+      "actionId": "transcribe-page:transcribe-page",
+      "additionalMetadata": {},
+      "attempt": 1,
+      "createdAt": "2026-10-23T16:43:01.971037Z",
+      "displayName": "transcribe-page-1",
+      "duration": 37219,
+      "errorMessage": "",
+      "finishedAt": "2026-10-23T16:43:39.229096Z",
+      "input": {
+        "page": 3
+      },
+      "isDurable": false,
+      "isEvicted": false,
+      "metadata": {
+        "createdAt": "2026-10-23T16:43:01.971037Z",
+        "id": "00000000-0000-0000-0000-000000000001",
+        "updatedAt": "2026-10-23T16:43:01.971037Z"
+      },
+      "numSpawnedChildren": 0,
+      "output": {
+        "characters": 1024
+      },
+      "parentTaskExternalId": "00000000-0000-0000-0000-000000000003",
+      "retryCount": 0,
+      "startedAt": "2026-10-23T16:43:02.009164Z",
+      "status": "COMPLETED",
+      "stepId": "00000000-0000-0000-0000-000000000002",
+      "taskExternalId": "00000000-0000-0000-0000-000000000001",
+      "taskId": 94369720,
+      "taskInsertedAt": "2026-10-23T16:43:01.971037Z",
+      "tenantId": "00000000-0000-0000-0000-000000000004",
+      "type": "TASK",
+      "workflowId": "00000000-0000-0000-0000-000000000005",
+      "workflowRunExternalId": "00000000-0000-0000-0000-000000000001",
+      "workflowVersionId": "00000000-0000-0000-0000-000000000006"
+    }
+  ],
+  "workflowConfig": {
+    "CronInput": null,
+    "CronTriggers": null,
+    "DefaultPriority": 1,
+    "EventTriggers": null,
+    "Name": "transcribe-page",
+    "Sticky": null,
+    "Tasks": [
+      {
+        "Action": "transcribe-page:transcribe-page",
+        "DesiredWorkerLabels": null,
+        "Parents": [],
+        "RateLimits": [],
+        "ReadableId": "transcribe-page",
+        "Retries": 2,
+        "RetryBackoffFactor": null,
+        "RetryBackoffMaxSeconds": null,
+        "ScheduleTimeout": "24h",
+        "Timeout": "5m",
+        "TriggerConditions": []
+      }
+    ],
+    "description": "",
+    "inputJsonSchema": ""
+  }
+}

@@ -114,7 +114,13 @@ impl Context {
             .find(|task| task.task_external_id == self.task_run_external_id)
             .unwrap();
 
-        Ok(current_task.input.triggers.filter_payload.clone())
+        Ok(current_task
+            .input
+            .triggers
+            .as_ref()
+            .map_or(serde_json::Value::Null, |triggers| {
+                triggers.filter_payload.clone()
+            }))
     }
 
     /// Log a line to the Hatchet API. This will send the log line to the Hatchet API and return immediately.

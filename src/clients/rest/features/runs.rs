@@ -129,10 +129,15 @@ pub mod models {
         pub filter_payload: serde_json::Value,
     }
 
+    /// The input a task was run with. Hatchet used to wrap it with the outputs
+    /// of the task's parents and its triggers, but now returns the input as it
+    /// was given, so both are absent from most runs.
     #[derive(Debug, Deserialize)]
     pub struct TaskInput {
+        #[serde(default)]
         pub parents: HashMap<String, TaskParent>,
-        pub triggers: Triggers,
+        #[serde(default)]
+        pub triggers: Option<Triggers>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -174,5 +179,28 @@ pub mod models {
             serde_json::from_str(&json_str)
                 .expect("Failed to deserialize to GetWorkflowRunResponse")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::models::{GetWorkflowRunResponse, WorkflowStatus};
+    use crate::clients::rest::models::V1WorkflowRunCreate200Response;
+
+    /// A run as Hatchet Cloud returns it since late October 2026: each task's
+    /// input is the input as it was given, with neither parents nor triggers.
+    #[test]
+    fn test_reads_a_workflow_run_without_parents_or_triggers() {
+        let response: V1WorkflowRunCreate200Response =
+            serde_json::from_str(include_str!("fixtures/workflow_run_without_parents.json"))
+                .unwrap();
+
+        let workflow_run = GetWorkflowRunResponse::from(response);
+
+        assert!(matches!(workflow_run.run.status, WorkflowStatus::Completed));
+        let task = &workflow_run.tasks[0];
+        assert_eq!(task.output, Some(serde_json::json!({ "characters": 1024 })));
+        assert!(task.input.parents.is_empty());
+        assert!(task.input.triggers.is_none());
     }
 }

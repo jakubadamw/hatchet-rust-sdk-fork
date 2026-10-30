@@ -56,6 +56,20 @@ impl Hatchet {
         })
     }
 
+    /// A configuration for calling the REST API directly, for the calls none of
+    /// the higher-level clients makes.
+    pub(crate) fn rest_configuration(&self) -> Configuration {
+        Configuration {
+            base_path: self.server_url.clone(),
+            user_agent: None,
+            client: reqwest::Client::new(),
+            basic_auth: None,
+            oauth_access_token: None,
+            bearer_access_token: Some(self.api_token.clone()),
+            api_key: None,
+        }
+    }
+
     async fn create_channel(
         grpc_address: &str,
         tls_strategy: &TlsStrategy,

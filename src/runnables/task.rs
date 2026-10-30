@@ -265,7 +265,7 @@ where
                     parent_id: None,
                     parent_task_run_external_id: None,
                     child_index: None,
-                    child_key: None,
+                    child_key: options.key.clone(),
                     additional_metadata,
                     desired_worker_id,
                     priority: None,
